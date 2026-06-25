@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
-import { Line } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
+import ChartDataLabels from 'chartjs-plugin-datalabels';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
+  Filler
 } from 'chart.js';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler);
 
 const ForecastDashboard = () => {
   const keywordsList = [
@@ -22,538 +25,413 @@ const ForecastDashboard = () => {
     "views_pubertas", "views_radang", "views_stres", "views_stress", "views_wajah"
   ];
 
-  const [selectedKeyword, setSelectedKeyword] = useState(keywordsList[7]);
-  const [timeFilter, setTimeFilter] = useState('mingguan');
-  const [chartData, setChartData] = useState(null);
-  const [summaryCards, setSummaryCards] = useState(null);
+  const [selectedKeywords, setSelectedKeywords] = useState([keywordsList[7]]); // Default: views_jerawat
+  const [showDropdown, setShowDropdown] = useState(false); 
+  const [activeTab, setActiveTab] = useState('prediksi'); 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const [multiApiData, setMultiApiData] = useState([]); 
+  const [metrics, setMetrics] = useState({ totalObservasi: "0 Hari", rataRataViews: 0, rekorTertinggi: 0, pergerakanTren: "0%" });
+  const [cardsSummaryCollector, setCardsSummaryCollector] = useState([]);
+
+  const BASE_URL_API = "https://angkykurniawan-forecastingjerawat.hf.space";
+
+  const colorPalette = [
+    '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ef4444', 
+    '#06b6d4', '#ec4899', '#84cc16', '#14b8a6', '#6366f1'
+  ];
+
   const hitungRataRata = (arr) => {
     if (!arr || arr.length === 0) return 0;
-    const total = arr.reduce((acc, val) => acc + val, 0);
-    return Math.round(total / arr.length);
+    return Math.round(arr.reduce((acc, val) => acc + val, 0) / arr.length);
+  };
+
+  const handleToggleKeyword = (kw) => {
+    if (selectedKeywords.includes(kw)) {
+      if (selectedKeywords.length === 1) return; 
+      setSelectedKeywords(selectedKeywords.filter(item => item !== kw));
+    } else {
+      setSelectedKeywords([...selectedKeywords, kw]);
+    }
   };
 
   const handleRunPrediction = async () => {
     setLoading(true);
     setError(null);
+    setShowDropdown(false);
     
-    let keywordFinal = selectedKeyword;
-
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: keywordFinal }),
+      const requests = selectedKeywords.map(async (kw) => {
+        let response = await fetch(`${BASE_URL_API}/api/predict`, {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword: kw }),
+        });
+        if (!response.ok) throw new Error(`Gagal memuat kueri: ${kw}`);
+        const resJson = await response.json();
+        return { keyword: kw, data: resJson };
       });
 
-      if (!response.ok) {
-        throw new Error('Server error');
-      }
-
-      const result = await response.json();
+      const responses = await Promise.all(requests);
       
-      // FIX SINKRONISASI: Menarik data_forecasting langsung dari json app.py baru
-      const rawPredictions = result.data_forecasting;
+      let dataCollector = [];
+      let globalMaxValues = [];
+      let globalAllHistory = [];
+      let globalAllForecast = [];
+      let totalHariSample = 0;
+      let summaryCardsCollector = [];
 
-      if (!rawPredictions || rawPredictions.length === 0) {
-        throw new Error('Data peramalan kosong dari server backend.');
-      }
-
-      let labelsX = [];
-      let dataY = [];
-      let cardsInfo = {};
-
-      if (timeFilter === 'mingguan') {
-        labelsX = Array.from({ length: 12 }, (_, i) => `Minggu ${i + 1}`);
+      responses.forEach((item, index) => {
+        if (!item.data || item.data.status !== "success") return;
         
-        for (let i = 0; i < 12; i++) {
-          const sliceMinggu = rawPredictions.slice(i * 7, (i + 1) * 7);
-          dataY.push(hitungRataRata(sliceMinggu));
-        }
+        const hist = item.data.data_historis;
+        const fore = item.data.data_forecasting;
+        const color = colorPalette[index % colorPalette.length];
 
-        cardsInfo = {
-          unit: 'Minggu',
-          box1: dataY[0] || 0,
-          box2: dataY[1] || 0,
-          box3: dataY[2] || 0,
-        };
+        totalHariSample = hist.length + fore.length;
+        globalMaxValues.push(Math.max(...hist, ...fore));
+        globalAllHistory.push(...hist);
+        globalAllForecast.push(...fore);
 
-      } else {
-        labelsX = ['Bulan 1', 'Bulan 2', 'Bulan 3'];
-        
-        const bulan1 = rawPredictions.slice(0, 30);
-        const bulan2 = rawPredictions.slice(30, 60);
-        const bulan3 = rawPredictions.slice(60, 90);
+        dataCollector.push({
+          label: item.keyword.replace('views_', '').toUpperCase(),
+          historis: hist,
+          forecasting: fore
+        });
 
-        dataY = [hitungRataRata(bulan1), hitungRataRata(bulan2), hitungRataRata(bulan3)];
-
-        cardsInfo = {
-          unit: 'Bulan',
-          box1: dataY[0] || 0,
-          box2: dataY[1] || 0,
-          box3: dataY[2] || 0,
-        };
-      }
-
-      setChartData({
-        labels: labelsX,
-        datasets: [
-          {
-            label: `Estimasi Volume Penayangan: ${keywordFinal.replace('views_', '').toUpperCase()}`,
-            data: dataY,
-            borderColor: '#2563eb',
-            backgroundColor: 'rgba(37, 99, 235, 0.08)',
-            borderWidth: 3,
-            tension: 0.4,
-            pointRadius: 5,
-            pointBackgroundColor: '#2563eb',
-            pointBorderColor: '#fff',
-            pointBorderWidth: 2,
-            pointHoverRadius: 8,
-            fill: true,
-          }
-        ]
+        summaryCardsCollector.push({
+          name: item.keyword.replace('views_', '').toUpperCase(),
+          color: color,
+          avgHistory: hitungRataRata(hist),
+          avgForecast: hitungRataRata(fore),
+          peakForecast: Math.max(...fore),
+          p1: hitungRataRata(fore.slice(0, 30)),
+          p2: hitungRataRata(fore.slice(30, 60)),
+          p3: hitungRataRata(fore.slice(60, 90))
+        });
       });
 
-      setSummaryCards(cardsInfo);
+      setMultiApiData(dataCollector);
+      setCardsSummaryCollector(summaryCardsCollector);
+
+      const avgHistGlobal = hitungRataRata(globalAllHistory);
+      const avgForeGlobal = hitungRataRata(globalAllForecast);
+      const selisihPersen = ((avgForeGlobal - avgHistGlobal) / (avgHistGlobal || 1)) * 100;
+
+      setMetrics({
+        totalObservasi: `${totalHariSample} Hari`,
+        rataRataViews: avgHistGlobal,
+        rekorTertinggi: Math.max(...globalMaxValues),
+        pergerakanTren: `${selisihPersen >= 0 ? '+' : ''}${selisihPersen.toFixed(2)}%`
+      });
 
     } catch (err) {
-      setError("Gagal terhubung ke Server Python. Pastikan app.py sudah dijalankan!");
-      console.error(err);
+      setError(`⚠️ Gagal memproses data tren pencarian: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getPrediksiChartData = () => {
+    let labelsX = [];
+    let datasets = [];
+    let labelSumbuSet = false;
+
+    multiApiData.forEach((item, index) => {
+      const color = colorPalette[index % colorPalette.length];
+      const datasetAktual = [];
+      const datasetProyeksi = [];
+
+      if (!labelSumbuSet) {
+        item.historis.forEach((_, idx) => labelsX.push(`H-${item.historis.length - idx}`));
+        item.forecasting.forEach((_, idx) => labelsX.push(`Hari +${idx + 1}`));
+        labelSumbuSet = true;
+      }
+
+      item.historis.forEach((val) => {
+        datasetAktual.push(val);
+        datasetProyeksi.push(null);
+      });
+
+      if (datasetAktual.length > 0) {
+        datasetProyeksi[datasetAktual.length - 1] = datasetAktual[datasetAktual.length - 1];
+      }
+
+      item.forecasting.forEach((val) => {
+        datasetAktual.push(null);
+        datasetProyeksi.push(val);
+      });
+
+      datasets.push({
+        label: `${item.label} (Tren Aktual)`,
+        data: datasetAktual,
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+      });
+
+      datasets.push({
+        label: `${item.label} (Ramalan AI)`,
+        data: datasetProyeksi,
+        borderColor: color,
+        backgroundColor: multiApiData.length === 1 ? `${color}1A` : 'transparent', 
+        borderWidth: 2,
+        borderDash: [4, 4],
+        pointRadius: 0,
+        fill: multiApiData.length === 1,
+      });
+    });
+
+    return { labels: labelsX, datasets };
+  };
+
+  const getPolaMusimanChartData = () => {
+    let labelsX = [];
+    let datasets = [];
+    let labelSumbuSet = false;
+
+    multiApiData.forEach((item, index) => {
+      const color = colorPalette[index % colorPalette.length];
+      if (!labelSumbuSet) {
+        labelsX = item.historis.map((_, idx) => `H-${item.historis.length - idx}`);
+        labelSumbuSet = true;
+      }
+
+      const movingAverage7Hari = item.historis.map((val, idx, arr) => {
+        if (idx < 6) return val;
+        return Math.round(arr.slice(idx - 6, idx + 1).reduce((a, b) => a + b, 0) / 7);
+      });
+
+      datasets.push({
+        label: `${item.label} (Smoothed MA-7)`,
+        data: movingAverage7Hari,
+        borderColor: color,
+        borderWidth: 2.5,
+        pointRadius: 0,
+        fill: false
+      });
+    });
+
+    return { labels: labelsX, datasets };
+  };
+
+  const getDistribusiChartData = () => {
+    const datasets = multiApiData.map((item, index) => {
+      const color = colorPalette[index % colorPalette.length];
+      return {
+        label: item.label,
+        data: [
+          hitungRataRata(item.forecasting.slice(0, 30)),
+          hitungRataRata(item.forecasting.slice(30, 60)),
+          hitungRataRata(item.forecasting.slice(60, 90))
+        ],
+        backgroundColor: color,
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+      };
+    });
+
+    return {
+      labels: ['Proyeksi Bulan ke-1', 'Proyeksi Bulan ke-2', 'Proyeksi Bulan ke-3'],
+      datasets
+    };
+  };
+
+  const getKorelasiChartData = () => {
+    let labelsX = ['Titik Terendah', 'Titik Median', 'Titik Tertinggi'];
+    const datasets = multiApiData.map((item, index) => {
+      const color = colorPalette[index % colorPalette.length];
+      const sortedFore = [...item.forecasting].sort((a,b) => a-b);
+      return {
+        label: `Matriks Distribusi: ${item.label}`,
+        data: [sortedFore[0], sortedFore[Math.floor(sortedFore.length/2)], sortedFore[sortedFore.length-1]],
+        borderColor: color,
+        backgroundColor: `${color}33`,
+        borderWidth: 2,
+        pointRadius: 6,
+        fill: true
+      };
+    });
+    return { labels: labelsX, datasets };
+  };
+
+  const darkChartOptions = {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: {
+      legend: { labels: { color: '#b3b3b3', font: { size: 11, weight: '500' }, usePointStyle: true }, position: 'top' },
+      tooltip: { mode: 'index', intersect: false },
+      datalabels: {
+        display: activeTab === 'distribusi' || activeTab === 'korelasi', 
+        align: 'top',
+        anchor: 'end',
+        color: '#ffffff',
+        font: { size: 10, weight: '700' },
+        formatter: (value) => value.toLocaleString('id-ID')
+      }
+    },
+    scales: {
+      y: { grid: { color: 'rgba(255, 255, 255, 0.05)', borderDash: [3, 3] }, ticks: { color: '#777' }, title: { display: true, text: 'Volume Penayangan (Search Views)', color: '#888' } },
+      x: { grid: { display: false }, ticks: { color: '#777' } }
     }
   };
 
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1a1f3a 0%, #2d1b4e 50%, #1a2847 100%)',
-      padding: '40px 30px',
-      margin: 0,
-      boxSizing: 'border-box',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
-      width: '100%',
-      overflow: 'hidden'
+      backgroundColor: '#0f111a',
+      color: '#e2e4e9',
+      padding: '30px 20px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      boxSizing: 'border-box'
     }}>
-      <div style={{ 
-        maxWidth: '100%', 
-        width: '100%',
-        margin: '0 auto'
-      }}>
+      <div style={{ width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
         
-        <div style={{
-          background: 'linear-gradient(135deg, #2d3561 0%, #3d2672 100%)',
-          color: 'white',
-          padding: '50px 40px',
-          borderRadius: '16px',
-          marginBottom: '40px',
-          boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
-          textAlign: 'center'
-        }}>
-          <h1 style={{
-            margin: '0 0 15px 0',
-            fontSize: '2.5rem',
-            fontWeight: '700',
-            letterSpacing: '-0.5px'
-          }}>
-            Dashboard Forecasting Kesehatan Kulit
-          </h1>
-          <p style={{
-            margin: 0,
-            fontSize: '1.1rem',
-            opacity: 0.9,
-            fontWeight: '400',
-            letterSpacing: '0.3px'
-          }}>
-            Analisis Prediksi Tren dengan Machine Learning
-          </p>
+        {/* ================= ATAS: KPI GLOBAL METRICS GRID ================= */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px', marginBottom: '30px', background: '#161925', padding: '20px', borderRadius: '10px', border: '1px solid #222638' }}>
+          <div><span style={{ color: '#848a9e', fontSize: '12px', display: 'block', marginBottom: '5px', textTransform: 'uppercase' }}>📊 Jendela Observasi Tren</span><strong style={{ fontSize: '26px', fontWeight: '600', color: '#ffffff' }}>{metrics.totalObservasi}</strong></div>
+          <div><span style={{ color: '#848a9e', fontSize: '12px', display: 'block', marginBottom: '5px', textTransform: 'uppercase' }}>📈 Rata-rata Views Historis</span><strong style={{ fontSize: '26px', fontWeight: '600', color: '#ffffff' }}>{metrics.rataRataViews.toLocaleString('id-ID')}</strong></div>
+          <div><span style={{ color: '#848a9e', fontSize: '12px', display: 'block', marginBottom: '5px', textTransform: 'uppercase' }}>🚨 Lonjakan Tren Tertinggi</span><strong style={{ fontSize: '26px', fontWeight: '600', color: '#ffffff' }}>{metrics.rekorTertinggi.toLocaleString('id-ID')}</strong></div>
+          <div>
+            <span style={{ color: '#848a9e', fontSize: '12px', display: 'block', marginBottom: '5px', textTransform: 'uppercase' }}>🔄 Estimasi Pergeseran Tren</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <strong style={{ fontSize: '26px', fontWeight: '600', color: metrics.pergerakanTren.includes('-') ? '#ff4d4d' : '#00e676' }}>{metrics.pergerakanTren}</strong>
+              <span style={{ fontSize: '12px', padding: '2px 6px', borderRadius: '4px', background: metrics.pergerakanTren.includes('-') ? 'rgba(255,77,77,0.15)' : 'rgba(0,230,118,0.15)', color: metrics.pergerakanTren.includes('-') ? '#ff4d4d' : '#00e676', fontWeight: '700' }}>{metrics.pergerakanTren.includes('-') ? '↓' : '↑'}</span>
+            </div>
+          </div>
         </div>
 
-        <div style={{
-          background: '#252d45',
-          padding: '30px',
-          borderRadius: '14px',
-          marginBottom: '30px',
-          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-          gap: '25px',
-          alignItems: 'flex-end',
-          border: '1px solid rgba(255, 255, 255, 0.1)'
-        }}>
-          <div>
-            <label style={{
-              display: 'block',
-              marginBottom: '10px',
-              fontSize: '14px',
-              fontWeight: '600',
-              color: '#e5e7eb',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              📋 Pilih Kata Kunci
-            </label>
-            <select 
-              value={selectedKeyword} 
-              onChange={(e) => {
-                setSelectedKeyword(e.target.value);
-              }}
-              style={{
-                width: '100%',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                border: '2px solid rgba(255, 255, 255, 0.2)',
-                fontSize: '15px',
-                fontWeight: '500',
-                color: '#e5e7eb',
-                background: '#1f2937',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                boxSizing: 'border-box'
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#60a5fa';
-                e.target.style.boxShadow = '0 0 0 3px rgba(96, 165, 250, 0.1)';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                e.target.style.boxShadow = 'none';
-              }}
+        {/* ================= INPUT SELECTION DROPDOWN MATRIX ================= */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 240px', gap: '20px', background: '#161925', padding: '15px 20px', borderRadius: '8px', border: '1px solid #222638', marginBottom: '25px', alignItems: 'center', zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', position: 'relative' }}>
+            <span style={{ fontSize: '13px', fontWeight: '700', color: '#848a9e' }}>KUERI KATA KUNCI:</span>
+            <div 
+              onClick={() => setShowDropdown(!showDropdown)}
+              style={{ padding: '10px 15px', borderRadius: '6px', background: '#0f111a', color: '#fff', border: '1px solid #333852', cursor: 'pointer', fontSize: '14px', fontWeight: '600', minWidth: '260px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', userSelect: 'none' }}
             >
-              {keywordsList.map((kw) => (
-                <option key={kw} value={kw} style={{ background: '#1f2937', color: '#e5e7eb' }}>
-                  {kw.replace('views_', '').toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
+              <span>{selectedKeywords.length} Kata Kunci Dipilih</span>
+              <span>{showDropdown ? '▲' : '▼'}</span>
+            </div>
 
-          <div>
-            <label style={{
-              display: 'block',
-              marginBottom: '10px',
-              fontSize: '14px',
-              fontWeight: '600',
-              color: '#e5e7eb',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              📅 Rentang Waktu
-            </label>
-            <select 
-              value={timeFilter} 
-              onChange={(e) => setTimeFilter(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                border: '2px solid rgba(255, 255, 255, 0.2)',
-                fontSize: '15px',
-                fontWeight: '500',
-                color: '#e5e7eb',
-                background: '#1f2937',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                boxSizing: 'border-box'
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#60a5fa';
-                e.target.style.boxShadow = '0 0 0 3px rgba(96, 165, 250, 0.1)';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                e.target.style.boxShadow = 'none';
-              }}
-            >
-              <option value="mingguan" style={{ background: '#1f2937', color: '#e5e7eb' }}>MINGGUAN</option>
-              <option value="bulanan" style={{ background: '#1f2937', color: '#e5e7eb' }}>BULANAN</option>
-            </select>
+            {showDropdown && (
+              <div style={{ position: 'absolute', top: '45px', left: '145px', background: '#161925', border: '1px solid #333852', borderRadius: '6px', width: '280px', maxHeight: '300px', overflowY: 'auto', zIndex: 99, boxShadow: '0 10px 25 rgba(0,0,0,0.5)', padding: '10px' }}>
+                {keywordsList.map(kw => {
+                  const isChecked = selectedKeywords.includes(kw);
+                  return (
+                    <label key={kw} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '4px', cursor: 'pointer', background: isChecked ? 'rgba(99, 102, 241, 0.15)' : 'transparent', color: isChecked ? '#6366f1' : '#b3b3b3' }}>
+                      <input type="checkbox" checked={isChecked} onChange={() => handleToggleKeyword(kw)} />
+                      <span style={{ fontSize: '12px', fontWeight: '600' }}>{kw.replace('views_', '').toUpperCase()}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
-
-          <button 
-            onClick={handleRunPrediction}
-            disabled={loading}
-            style={{
-              padding: '12px 28px',
-              borderRadius: '8px',
-              background: loading ? '#4b5563' : 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
-              color: 'white',
-              border: 'none',
-              fontSize: '15px',
-              fontWeight: '600',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'all 0.3s ease',
-              boxShadow: loading ? 'none' : '0 8px 20px rgba(59, 130, 246, 0.4)',
-              transform: loading ? 'scale(1)' : 'scale(1)',
-              width: '100%',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}
-            onMouseEnter={(e) => {
-              if (!loading) {
-                e.target.style.transform = 'translateY(-2px)';
-                e.target.style.boxShadow = '0 12px 28px rgba(59, 130, 246, 0.5)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!loading) {
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 8px 20px rgba(59, 130, 246, 0.4)';
-              }
-            }}
-          >
-            {loading ? '⏳ Menghitung...' : '▶ Analisis Prediksi'}
+          <button onClick={handleRunPrediction} disabled={loading} style={{ padding: '12px', borderRadius: '6px', background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)', color: '#fff', border: 'none', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}>
+            {loading ? '⏳ MEMPROSES ANALISIS...' : '🚀 PROYEKSIKAN TREN'}
           </button>
         </div>
 
-        {error && (
-          <div style={{
-            background: '#7f1d1d',
-            border: '2px solid #dc2626',
-            color: '#fecaca',
-            padding: '18px 24px',
-            borderRadius: '10px',
-            marginBottom: '30px',
-            fontSize: '15px',
-            fontWeight: '500',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <span style={{ fontSize: '20px' }}>⚠️</span>
-            {error}
-          </div>
-        )}
+        {/* ================= TABS MENU SELECTION ================= */}
+        <div style={{ display: 'flex', gap: '5px', marginBottom: '20px', borderBottom: '1px solid #222638' }}>
+          <button onClick={() => setActiveTab('prediksi')} style={{ padding: '12px 20px', border: 'none', background: activeTab === 'prediksi' ? '#161925' : 'transparent', color: activeTab === 'prediksi' ? '#ff7f0e' : '#848a9e', borderBottom: activeTab === 'prediksi' ? '3px solid #ff7f0e' : '3px solid transparent', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}>
+            🔮 Prediksi Tren Masa Depan
+          </button>
+          <button onClick={() => setActiveTab('pola')} style={{ padding: '12px 20px', border: 'none', background: activeTab === 'pola' ? '#161925' : 'transparent', color: activeTab === 'pola' ? '#d62728' : '#848a9e', borderBottom: activeTab === 'pola' ? '3px solid #d62728' : '3px solid transparent', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}>
+            🍂 Siklus Musiman & Garis Tren
+          </button>
+          <button onClick={() => setActiveTab('distribusi')} style={{ padding: '12px 20px', border: 'none', background: activeTab === 'distribusi' ? '#161925' : 'transparent', color: activeTab === 'distribusi' ? '#3498db' : '#848a9e', borderBottom: activeTab === 'distribusi' ? '3px solid #3498db' : '3px solid transparent', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}>
+            📊 Rangkuman Minat Bulanan
+          </button>
+          <button onClick={() => setActiveTab('korelasi')} style={{ padding: '12px 20px', border: 'none', background: activeTab === 'korelasi' ? '#161925' : 'transparent', color: activeTab === 'korelasi' ? '#a855f7' : '#848a9e', borderBottom: activeTab === 'korelasi' ? '3px solid #a855f7' : '3px solid transparent', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}>
+            📈 Analisis Batas Sebaran Data
+          </button>
+          <button onClick={() => setActiveTab('ringkasan')} style={{ padding: '12px 20px', border: 'none', background: activeTab === 'ringkasan' ? '#161925' : 'transparent', color: activeTab === 'ringkasan' ? '#00e676' : '#848a9e', borderBottom: activeTab === 'ringkasan' ? '3px solid #00e676' : '3px solid transparent', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}>
+            📋 Ringkasan Informasi
+          </button>
+        </div>
 
-        {/* CHART CONTAINER */}
-        <div style={{
-          background: '#252d45',
-          padding: '35px',
-          borderRadius: '14px',
-          marginBottom: '30px',
-          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-          border: '1px solid rgba(255, 255, 255, 0.1)'
-        }}>
-          {chartData ? (
+        {/* ================= MAIN PLOT CANVAS ================= */}
+        <div style={{ background: '#161925', padding: '30px', borderRadius: '10px', border: '1px solid #222638', boxShadow: '0 10px 30px rgba(0,0,0,0.3)', marginBottom: '30px' }}>
+          {error && <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', padding: '12px', borderRadius: '6px', marginBottom: '20px' }}>{error}</div>}
+
+          {multiApiData.length > 0 ? (
             <div>
-              <h2 style={{
-                margin: '0 0 25px 0',
-                fontSize: '1.4rem',
-                fontWeight: '600',
-                color: '#e5e7eb'
-              }}>
-                📊 Visualisasi Proyeksi {timeFilter === 'mingguan' ? 'Mingguan' : 'Bulanan'}
-              </h2>
-              <Line 
-                data={chartData} 
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: true,
-                  plugins: {
-                    legend: {
-                      position: 'top',
-                      labels: {
-                        boxWidth: 14,
-                        font: { weight: '500', size: 13 },
-                        color: '#9ca3af',
-                        padding: 15,
-                        usePointStyle: true
-                      }
-                    },
-                    title: {
-                      display: false
-                    }
-                  },
-                  scales: {
-                    y: {
-                      grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                      title: { display: true, text: 'Views', font: { weight: '600', size: 13 }, color: '#9ca3af' },
-                      beginAtZero: false,
-                      ticks: { font: { size: 12 }, color: '#6b7280' }
-                    },
-                    x: {
-                      grid: { display: false },
-                      title: { display: true, text: timeFilter === 'mingguan' ? 'Minggu' : 'Bulan', font: { weight: '600', size: 13 }, color: '#9ca3af' },
-                      ticks: { font: { size: 12 }, color: '#6b7280' }
-                    }
-                  }
-                }} 
-              />
+              {activeTab === 'prediksi' && (
+                <div>
+                  <h3 style={{ margin: '0 0 5px 0', fontSize: '18px', fontWeight: '600', color: '#fff' }}>Proyeksi Perilaku Pencarian Model Deep Learning</h3>
+                  <p style={{ margin: '0 0 25px 0', fontSize: '12px', color: '#848a9e' }}>Uji Komparasi Runutan Volume Views Kontinu Harian Bersambung</p>
+                  <Line data={getPrediksiChartData()} options={darkChartOptions} />
+                </div>
+              )}
+
+              {activeTab === 'pola' && (
+                <div>
+                  <h3 style={{ margin: '0 0 5px 0', fontSize: '18px', fontWeight: '600', color: '#fff' }}>Analisis Interaktif Siklus Musiman Kata Kunci (MA-7)</h3>
+                  <p style={{ margin: '0 0 25px 0', fontSize: '12px', color: '#848a9e' }}>Eliminasi Noise Gejolak Harian untuk Membaca Tren Minat Utama Jangka Panjang</p>
+                  <Line data={getPolaMusimanChartData()} options={darkChartOptions} />
+                </div>
+              )}
+
+              {activeTab === 'distribusi' && (
+                <div>
+                  <h3 style={{ margin: '0 0 5px 0', fontSize: '18px', fontWeight: '600', color: '#fff' }}>Estimasi Distribusi Rata-rata Minat Bulanan</h3>
+                  <p style={{ margin: '0 0 25px 0', fontSize: '12px', color: '#848a9e' }}>Komparasi Balok Estimasi Volume Perhatian 3 Periode Kedepan</p>
+                  <Bar data={getDistribusiChartData()} plugins={[ChartDataLabels]} options={darkChartOptions} />
+                </div>
+              )}
+
+              {activeTab === 'korelasi' && (
+                <div>
+                  <h3 style={{ margin: '0 0 5px 0', fontSize: '18px', fontWeight: '600', color: '#fff' }}>Rentang Koefisien Sebaran Minat Pencarian</h3>
+                  <p style={{ margin: '0 0 25px 0', fontSize: '12px', color: '#848a9e' }}>Komparasi Batas Nilai Penayangan Terendah, Median, dan Puncak Tertinggi Proyeksi</p>
+                  <Line data={getKorelasiChartData()} plugins={[ChartDataLabels]} options={darkChartOptions} />
+                </div>
+              )}
+
+              {activeTab === 'ringkasan' && (
+                <div>
+                  <h3 style={{ margin: '0 0 5px 0', fontSize: '18px', fontWeight: '600', color: '#00e676' }}>📋 Ringkasan Kuantitatif Informasi Kata Kunci Aktif</h3>
+                  <p style={{ margin: '0 0 25px 0', fontSize: '12px', color: '#848a9e' }}>Metrik Statistik Perbandingan Volume Pencarian (Views) Masa Lalu dan Masa Depan AI</p>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
+                    {cardsSummaryCollector.map((card) => (
+                      <div key={card.name} style={{ background: '#0f111a', borderTop: `4px solid ${card.color}`, borderRadius: '6px', padding: '20px', border: '1px solid #222638' }}>
+                        <h4 style={{ margin: '0 0 15px 0', fontSize: '15px', fontWeight: '700', color: card.color }}>{card.name}</h4>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12.5px', color: '#b3b3b3' }}>
+                          <div>Rerata 180 Hari Lalu:<br/><strong style={{ color: '#fff', fontSize: '14px' }}>{card.avgHistory.toLocaleString('id-ID')} views</strong></div>
+                          <div>Rerata 90 Hari AI:<br/><strong style={{ color: '#a855f7', fontSize: '14px' }}>{card.avgForecast.toLocaleString('id-ID')} views</strong></div>
+                          <div style={{ gridColumn: 'span 2', height: '1px', background: '#222638', margin: '4px 0' }}></div>
+                          <div>Estimasi Bulan 1:<br/><strong style={{ color: '#10b981' }}>{card.p1.toLocaleString('id-ID')}</strong></div>
+                          <div>Estimasi Bulan 2:<br/><strong style={{ color: '#3b82f6' }}>{card.p2.toLocaleString('id-ID')}</strong></div>
+                          <div>Estimasi Bulan 3:<br/><strong style={{ color: '#f59e0b' }}>{card.p3.toLocaleString('id-ID')}</strong></div>
+                          <div>Lonjakan Tertinggi:<br/><strong style={{ color: '#ef4444' }}>{card.peakForecast.toLocaleString('id-ID')} views</strong></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
-            <div style={{
-              textAlign: 'center',
-              padding: '80px 40px',
-              color: '#6b7280'
-            }}>
-              <div style={{ fontSize: '3rem', marginBottom: '15px' }}>📈</div>
-              <p style={{
-                margin: 0,
-                fontSize: '16px',
-                fontWeight: '500',
-                lineHeight: '1.6'
-              }}>
-                Silakan tentukan kata kunci dan klik tombol analisis<br/>untuk menampilkan proyeksi grafik
+            <div style={{ textAlign: 'center', padding: '100px 20px', color: '#525876' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '15px' }}>🔮</div>
+              <p style={{ margin: 0, fontSize: '14px', fontWeight: '500' }}>
+                Centang kueri kata kunci pada selection box di atas,<br />
+                kemudian klik tombol **"PROYEKSIKAN TREN"** untuk melihat analisis komparasi volume penayangan.
               </p>
             </div>
           )}
         </div>
 
-        {/* SUMMARY CARDS */}
-        {summaryCards && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '25px'
-          }}>
-            {/* Card 1 */}
-            <div style={{
-              background: 'linear-gradient(135deg, #1e3a1f 0%, #1f3a2f 100%)',
-              border: '2px solid #10b981',
-              padding: '28px',
-              borderRadius: '12px',
-              boxShadow: '0 8px 24px rgba(16, 185, 129, 0.15)',
-              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(16, 185, 129, 0.25)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(16, 185, 129, 0.15)';
-            }}>
-              <h4 style={{
-                margin: '0 0 12px 0',
-                color: '#6ee7b7',
-                fontSize: '13px',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: '1px'
-              }}>
-                ✓ Proyeksi 1 {summaryCards.unit}
-              </h4>
-              <p style={{
-                margin: '0 0 10px 0',
-                fontSize: '32px',
-                fontWeight: '700',
-                color: '#10b981'
-              }}>
-                {summaryCards.box1.toLocaleString('id-ID')}
-              </p>
-              <p style={{
-                margin: 0,
-                fontSize: '13px',
-                color: '#6ee7b7',
-                fontWeight: '500',
-                opacity: 0.8
-              }}>
-                Estimasi rata-rata views periode pertama
-              </p>
-            </div>
-
-            <div style={{
-              background: 'linear-gradient(135deg, #1e3a4c 0%, #1f2d42 100%)',
-              border: '2px solid #3b82f6',
-              padding: '28px',
-              borderRadius: '12px',
-              boxShadow: '0 8px 24px rgba(59, 130, 246, 0.15)',
-              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(59, 130, 246, 0.25)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(59, 130, 246, 0.15)';
-            }}>
-              <h4 style={{
-                margin: '0 0 12px 0',
-                color: '#93c5fd',
-                fontSize: '13px',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: '1px'
-              }}>
-                ✓ Proyeksi 2 {summaryCards.unit}
-              </h4>
-              <p style={{
-                margin: '0 0 10px 0',
-                fontSize: '32px',
-                fontWeight: '700',
-                color: '#3b82f6'
-              }}>
-                {summaryCards.box2.toLocaleString('id-ID')}
-              </p>
-              <p style={{
-                margin: 0,
-                fontSize: '13px',
-                color: '#93c5fd',
-                fontWeight: '500',
-                opacity: 0.8
-              }}>
-                Estimasi rata-rata views periode kedua
-              </p>
-            </div>
-
-            {/* Card 3 */}
-            <div style={{
-              background: 'linear-gradient(135deg, #3d1f4f 0%, #3d2a4f 100%)',
-              border: '2px solid #a855f7',
-              padding: '28px',
-              borderRadius: '12px',
-              boxShadow: '0 8px 24px rgba(168, 85, 247, 0.15)',
-              transition: 'transform 0.3s ease, box-shadow 0.3s ease'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.boxShadow = '0 12px 32px rgba(168, 85, 247, 0.25)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 8px 24px rgba(168, 85, 247, 0.15)';
-            }}>
-              <h4 style={{
-                margin: '0 0 12px 0',
-                color: '#d8b4fe',
-                fontSize: '13px',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: '1px'
-              }}>
-                ✓ Proyeksi 3 {summaryCards.unit}
-              </h4>
-              <p style={{
-                margin: '0 0 10px 0',
-                fontSize: '32px',
-                fontWeight: '700',
-                color: '#a855f7'
-              }}>
-                {summaryCards.box3.toLocaleString('id-ID')}
-              </p>
-              <p style={{
-                margin: 0,
-                fontSize: '13px',
-                color: '#d8b4fe',
-                fontWeight: '500',
-                opacity: 0.8
-              }}>
-                Estimasi rata-rata views periode ketiga
-              </p>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
 };
 
 export default ForecastDashboard;
-
-
-
-
