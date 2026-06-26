@@ -37,7 +37,6 @@ const ForecastDashboard = () => {
     '#10b981'
   ];
 
-  // Pembaruan Jendela Rentang Waktu 12 Bulan (September 2025 s.d Agustus 2026)
   const listNamaBulan = [
     { nama: "September 2025", tipe: "historis" },
     { nama: "Oktober 2025", tipe: "historis" },
@@ -47,15 +46,20 @@ const ForecastDashboard = () => {
     { nama: "Februari 2026", tipe: "historis" },
     { nama: "Maret 2026", tipe: "historis" },
     { nama: "April 2026", tipe: "historis" },
-    { nama: "Mei 2026", tipe: "historis" },     // Selesai 9 Bulan Pertama (Historis)
+    { nama: "Mei 2026", tipe: "historis" },
     { nama: "Juni 2026", tipe: "prediction" },
     { nama: "Juli 2026", tipe: "prediction" },
-    { nama: "Agustus 2026", tipe: "prediction" } // Selesai 3 Bulan Terakhir (Prediksi)
+    { nama: "Agustus 2026", tipe: "prediction" }
   ];
 
   const hitungRataRata = (arr) => {
     if (!arr || arr.length === 0) return 0;
     return Math.round(arr.reduce((acc, val) => acc + val, 0) / arr.length);
+  };
+
+  const hitungTotalVolume = (arr) => {
+    if (!arr || arr.length === 0) return 0;
+    return Math.round(arr.reduce((acc, val) => acc + val, 0));
   };
 
   const getSubLabelKategori = (kw) => {
@@ -115,7 +119,6 @@ const ForecastDashboard = () => {
         const rawForecast = item.data.data_forecasting;
         const totalRawData = rawHistory.length + rawForecast.length;
 
-        // Proporsi pembagian 9 bulan berbanding 3 bulan dari total data API
         const targetHistoryCount = Math.floor(totalRawData * (9 / 12));
         
         const allCombinedData = [...rawHistory, ...rawForecast];
@@ -137,7 +140,6 @@ const ForecastDashboard = () => {
           color: color
         });
 
-        // Split merata data prediksi untuk 3 Bulan Akhir (Juni, Juli, Agustus)
         const sepertiga = Math.floor(fore.length / 3);
         const p1 = fore.slice(0, sepertiga);
         const p2 = fore.slice(sepertiga, sepertiga * 2);
@@ -224,7 +226,7 @@ const ForecastDashboard = () => {
       });
 
       datasets.push({
-        label: `${item.label} (${item.subLabel} - 9 Bulan Aktual)`,
+        label: `${item.label} (Aktual)`,
         data: datasetAktual,
         borderColor: item.color,
         backgroundColor: 'transparent',
@@ -234,7 +236,7 @@ const ForecastDashboard = () => {
       });
 
       datasets.push({
-        label: `${item.label} (${item.subLabel} - 3 Bulan Ramalan AI)`,
+        label: `${item.label} (Ramalan AI)`,
         data: datasetProyeksi,
         borderColor: item.color,
         backgroundColor: multiApiData.length === 1 ? `${item.color}1A` : 'transparent',
@@ -261,7 +263,7 @@ const ForecastDashboard = () => {
       const finalDataMA = [...movingAverage7Hari, ...paddingNull];
 
       datasets.push({
-        label: `${item.label} (${item.subLabel} - Smoothed MA-7)`,
+        label: `${item.label} (MA-7)`,
         data: finalDataMA,
         borderColor: item.color,
         borderWidth: 2,
@@ -275,14 +277,18 @@ const ForecastDashboard = () => {
 
   const getDistribusiChartData = () => {
     const datasets = multiApiData.map((item) => {
-      const sepertiga = Math.floor(item.forecasting.length / 3);
+      const allData = [...item.historis, ...item.forecasting];
+      const monthlyBuckets = [];
+      const chunkSize = Math.floor(allData.length / 12);
+      
+      for (let i = 0; i < 12; i++) {
+        const chunk = allData.slice(i * chunkSize, (i + 1) * chunkSize);
+        monthlyBuckets.push(hitungTotalVolume(chunk));
+      }
+
       return {
-        label: `${item.label} (${item.subLabel})`,
-        data: [
-          hitungRataRata(item.forecasting.slice(0, sepertiga)),          
-          hitungRataRata(item.forecasting.slice(sepertiga, sepertiga * 2)),     
-          hitungRataRata(item.forecasting.slice(sepertiga * 2)) 
-        ],
+        label: `${item.label}`,
+        data: monthlyBuckets,
         backgroundColor: item.color,
         borderColor: 'rgba(255,255,255,0.1)',
         borderWidth: 1,
@@ -290,7 +296,7 @@ const ForecastDashboard = () => {
     });
 
     return {
-      labels: ['Juni 2026', 'Juli 2026', 'Agustus 2026'], 
+      labels: listNamaBulan.map(b => b.nama), 
       datasets
     };
   };
@@ -324,7 +330,7 @@ const ForecastDashboard = () => {
       },
       datalabels: {
         display: activeTab === 'distribusi',
-        align: 'top', anchor: 'end', color: '#ffffff', font: { size: 10, weight: '700' },
+        align: 'top', anchor: 'end', color: '#ffffff', font: { size: 9, weight: '700' },
         formatter: (value) => value.toLocaleString('id-ID')
       }
     },
@@ -332,12 +338,12 @@ const ForecastDashboard = () => {
       y: {
         grid: { color: 'rgba(255, 255, 255, 0.05)', borderDash: [3, 3] },
         ticks: { color: '#777', maxTicksLimit: 6 },
-        title: { display: true, text: 'Volume Views', color: '#888', font: { size: 11 } }
+        title: { display: true, text: 'Total Volume', color: '#888', font: { size: 11 } }
       },
       x: {
         grid: { display: false },
         ticks: {
-          color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 0, minRotation: 0,
+          color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 45, minRotation: 45,
           callback: function(val, index) {
             const match = tickPositions.find(t => t.index === index);
             return match ? match.text : null;
@@ -394,17 +400,10 @@ const ForecastDashboard = () => {
         .fd-card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; color: #b3b3b3; }
         .fd-card-divider { grid-column: span 2; height: 1px; background: #222638; }
         .fd-empty { text-align: center; padding: 80px 20px; color: #525876; }
-        .fd-table-title { font-size: 16px; font-weight: 600; color: #fff; margin: 35px 0 12px 0; }
-        .fd-table-container { width: 100%; max-height: 400px; overflow-y: auto; border: 1px solid #222638; border-radius: 8px; background: #0f111a; }
-        .fd-data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .fd-data-table th { background: #161925; color: #848a9e; padding: 12px; font-weight: 700; position: sticky; top: 0; border-bottom: 1px solid #222638; }
-        .fd-data-table td { padding: 12px; border-bottom: 1px solid #161925; }
       `}</style>
 
       <div className="fd-root">
         <div className="fd-inner">
-
-          {/* KPI Metrics */}
           <div className="fd-kpi-grid">
             <div>
               <span className="fd-kpi-label">📊 Jendela Observasi</span>
@@ -428,7 +427,6 @@ const ForecastDashboard = () => {
             </div>
           </div>
 
-          {/* Toolbar */}
           <div className="fd-toolbar">
             <span style={{ fontSize: '12px', fontWeight: '700', color: '#848a9e' }}>PILAR KATA KUNCI:</span>
             <div className="fd-keyword-wrapper">
@@ -455,7 +453,6 @@ const ForecastDashboard = () => {
             </button>
           </div>
 
-          {/* Tabs */}
           <div className="fd-tabs">
             {[
               { id: 'prediksi',   label: '🔮 Prediksi Tren Masa Depan',   activeColor: '#ff7f0e' },
@@ -477,7 +474,6 @@ const ForecastDashboard = () => {
             ))}
           </div>
 
-          {/* Chart Panel */}
           <div className="fd-chart-panel">
             {error && <div style={{ color: '#ff4d4d', marginBottom: '15px' }}>{error}</div>}
 
@@ -486,7 +482,6 @@ const ForecastDashboard = () => {
                 {activeTab === 'prediksi' && (
                   <div>
                     <h3 className="fd-chart-title">Proyeksi Perilaku Pencarian Model Deep Learning</h3>
-                    <p className="fd-chart-sub">Uji Skala Penuh Kalender Riil: September 2025 → Agustus 2026</p>
                     <div className="fd-chart-wrap">
                       <Line data={getPrediksiChartData()} options={darkChartOptions} />
                     </div>
@@ -496,7 +491,6 @@ const ForecastDashboard = () => {
                 {activeTab === 'pola' && (
                   <div>
                     <h3 className="fd-chart-title">Analisis Interaktif Siklus Musiman Kata Kunci (MA-7)</h3>
-                    <p className="fd-chart-sub">Mengikuti Rentang Skala Waktu Utama 9 Bulan Kalender Historis</p>
                     <div className="fd-chart-wrap">
                       <Line data={getPolaMusimanChartData()} options={darkChartOptionsPola} />
                     </div>
@@ -505,8 +499,8 @@ const ForecastDashboard = () => {
 
                 {activeTab === 'distribusi' && (
                   <div>
-                    <h3 className="fd-chart-title">Estimasi Distribusi Rata-rata Minat Bulanan</h3>
-                    <p className="fd-chart-sub">Hasil Rata-rata Pembagian Data Prediksi 3 Bulan Terakhir (Juni - Agustus 2026)</p>
+                    <h3 className="fd-chart-title">Akumulasi Total Minat Bulanan</h3>
+                    <p className="fd-chart-sub">Volume pencarian total selama 12 bulan (Sept 2025 - Agst 2026)</p>
                     <div className="fd-chart-wrap">
                       <Bar data={getDistribusiChartData()} plugins={[ChartDataLabels]} options={darkChartOptions} />
                     </div>
@@ -535,32 +529,6 @@ const ForecastDashboard = () => {
                     </div>
                   </div>
                 )}
-
-                {/* TABEL DETAIL */}
-                <h4 className="fd-table-title">📅 Tabel Detail Prediksi Per Hari ({multiApiData[0].forecasting.length} Hari Proyeksi)</h4>
-                <div className="fd-table-container">
-                  <table className="fd-data-table">
-                    <thead>
-                      <tr>
-                        <th>Timeline Proyeksi</th>
-                        {multiApiData.map(pilar => <th key={pilar.label} style={{ color: pilar.color }}>{pilar.label}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Array.from({ length: multiApiData[0].forecasting.length }).map((_, dayIdx) => (
-                        <tr key={dayIdx}>
-                          <td style={{ color: '#848a9e' }}>Hari Prediksi +{dayIdx + 1}</td>
-                          {multiApiData.map(pilar => (
-                            <td key={pilar.label}>
-                              {pilar.forecasting[dayIdx] !== undefined ? pilar.forecasting[dayIdx].toLocaleString('id-ID') : '-'} views
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
               </div>
             ) : (
               <div className="fd-empty">
@@ -569,7 +537,6 @@ const ForecastDashboard = () => {
               </div>
             )}
           </div>
-
         </div>
       </div>
     </>
