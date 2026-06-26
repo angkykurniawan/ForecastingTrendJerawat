@@ -303,6 +303,7 @@ const ForecastDashboard = () => {
 
   const isPositive = !metrics.pergerakanTren.includes('-');
 
+  // Opsi Grafik Line Utama (Menggunakan sistem mapping koordinat per hari)
   const darkChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -328,8 +329,39 @@ const ForecastDashboard = () => {
           }
         }
       },
+      datalabels: { display: false }
+    },
+    scales: {
+      y: {
+        grid: { color: 'rgba(255, 255, 255, 0.05)', borderDash: [3, 3] },
+        ticks: { color: '#777', maxTicksLimit: 6 },
+        title: { display: true, text: 'Volume Views', color: '#888', font: { size: 11 } }
+      },
+      x: {
+        grid: { display: false },
+        ticks: {
+          color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 0, minRotation: 0,
+          callback: function(val, index) {
+            const match = tickPositions.find(t => t.index === index);
+            return match ? match.text : null;
+          }
+        }
+      }
+    }
+  };
+
+  // 🛠️ OPSIONAL BAR CHART TERPISAH: Mengunci string array langsung agar tidak terpotong (Hanya September)
+  const barChartOptionsDistribusi = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: {
+        labels: { color: '#b3b3b3', font: { size: 11, weight: '500' }, usePointStyle: true, boxWidth: 10 },
+        position: 'top'
+      },
       datalabels: {
-        display: activeTab === 'distribusi',
+        display: true,
         align: 'top', anchor: 'end', color: '#ffffff', font: { size: 9, weight: '700' },
         formatter: (value) => value.toLocaleString('id-ID')
       }
@@ -343,11 +375,8 @@ const ForecastDashboard = () => {
       x: {
         grid: { display: false },
         ticks: {
-          color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 45, minRotation: 45,
-          callback: function(val, index) {
-            const match = tickPositions.find(t => t.index === index);
-            return match ? match.text : null;
-          }
+          color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 45, minRotation: 45
+          // Dipaksa render otomatis menggunakan array labels asli (12 Bulan Penuh Muncul)
         }
       }
     }
@@ -502,7 +531,7 @@ const ForecastDashboard = () => {
                     <h3 className="fd-chart-title">Akumulasi Total Minat Bulanan</h3>
                     <p className="fd-chart-sub">Volume pencarian total selama 12 bulan (Sept 2025 - Agst 2026)</p>
                     <div className="fd-chart-wrap">
-                      <Bar data={getDistribusiChartData()} plugins={[ChartDataLabels]} options={darkChartOptions} />
+                      <Bar data={getDistribusiChartData()} plugins={[ChartDataLabels]} options={barChartOptionsDistribusi} />
                     </div>
                   </div>
                 )}
