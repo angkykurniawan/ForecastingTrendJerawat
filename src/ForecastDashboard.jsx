@@ -277,12 +277,13 @@ const ForecastDashboard = () => {
 
   const getDistribusiChartData = () => {
     const datasets = multiApiData.map((item) => {
-      const allData = [...item.historis, ...item.forecasting];
+      // Menggunakan data historis saja (9 bulan pertama)
+      const historicalData = item.historis;
       const monthlyBuckets = [];
-      const chunkSize = Math.floor(allData.length / 12);
+      const chunkSize = Math.floor(historicalData.length / 9);
       
-      for (let i = 0; i < 12; i++) {
-        const chunk = allData.slice(i * chunkSize, (i + 1) * chunkSize);
+      for (let i = 0; i < 9; i++) {
+        const chunk = historicalData.slice(i * chunkSize, (i + 1) * chunkSize);
         monthlyBuckets.push(hitungTotalVolume(chunk));
       }
 
@@ -296,7 +297,8 @@ const ForecastDashboard = () => {
     });
 
     return {
-      labels: listNamaBulan.map(b => b.nama), 
+      // Filter list nama bulan hanya untuk tipe 'historis' (9 bulan)
+      labels: listNamaBulan.filter(b => b.tipe === 'historis').map(b => b.nama), 
       datasets
     };
   };
@@ -376,7 +378,7 @@ const ForecastDashboard = () => {
         grid: { display: false },
         ticks: {
           color: '#e2e4e9', font: { weight: '600', size: 10 }, maxRotation: 45, minRotation: 45
-          // Dipaksa render otomatis menggunakan array labels asli (12 Bulan Penuh Muncul)
+          // Dipaksa render otomatis menggunakan array labels asli (9 Bulan Penuh Muncul)
         }
       }
     }
@@ -528,8 +530,8 @@ const ForecastDashboard = () => {
 
                 {activeTab === 'distribusi' && (
                   <div>
-                    <h3 className="fd-chart-title">Akumulasi Total Minat Bulanan</h3>
-                    <p className="fd-chart-sub">Volume pencarian total selama 12 bulan (Sept 2025 - Agst 2026)</p>
+                    <h3 className="fd-chart-title">Akumulasi Total Minat Bulanan (Historis)</h3>
+                    <p className="fd-chart-sub">Volume pencarian total selama 9 bulan (Sept 2025 - Mei 2026)</p>
                     <div className="fd-chart-wrap">
                       <Bar data={getDistribusiChartData()} plugins={[ChartDataLabels]} options={barChartOptionsDistribusi} />
                     </div>
